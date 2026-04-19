@@ -689,12 +689,43 @@ We need to search the web. Use functions.WebSearch.")])))
            (role (plist-get last-message :role))
            (content (append (plist-get last-message :content) nil)))
       (should (equal role "assistant"))
-      (dolist (tool-call '((:type "tool_use" :id "toolu_01Q7ptGyMTHtj8NTAu1q93qS" :name "make_directory" :input
-                            (:parent "/tmp" :name "testdir3"))
-                           (:type "tool_use" :id "toolu_01Jqbxt5WYUt6RfpoBCHpA6X" :name "make_directory" :input
-                            (:parent "/tmp" :name "testdir2"))
-                           (:type "tool_use" :id "toolu_01GwpAyin6URSPn7ZuGSjXKz" :name "make_directory" :input
-                            (:parent "/tmp" :name "testdir1"))))
-        (should (member tool-call content))))))
+       (dolist (tool-call '((:type "tool_use" :id "toolu_01Q7ptGyMTHtj8NTAu1q93qS" :name "make_directory" :input
+                             (:parent "/tmp" :name "testdir3"))
+                            (:type "tool_use" :id "toolu_01Jqbxt5WYUt6RfpoBCHpA6X" :name "make_directory" :input
+                             (:parent "/tmp" :name "testdir2"))
+                            (:type "tool_use" :id "toolu_01GwpAyin6URSPn7ZuGSjXKz" :name "make_directory" :input
+                             (:parent "/tmp" :name "testdir1"))))
+         (should (member tool-call content))))))
 
+(ert-deftest gptel-test-openai-tool-stream-ignores-scalar-tool-args ()
+  "OpenAI tool streaming should drop malformed scalar argument payloads."
+  (let* ((backend (alist-get 'openai gptel-test-backends))
+         (info `(:backend ,backend
+                 :data (:messages [])
+                 :callback ignore)))
+    (with-temp-buffer
+      (insert "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_1\",\"function\":{\"name\":\"Edit\",\"arguments\":\"\\\"bad\\\"\"}}]}}]}\n")
+      (insert "data: [DONE]\n")
+      (goto-char (point-min))
+      (should (string= (gptel-curl--parse-stream backend info) ""))
+      (let ((tool-call (car (plist-get info :tool-use))))
+        (should (equal (plist-get tool-call :name) "Edit"))
+        (should-not (plist-get tool-call :args))))))
+
+(ert-deftest gptel-test-openai-responses-tool-stream-ignores-scalar-tool-args ()
+  "Responses API tool streaming should drop malformed scalar argument payloads."
+  (let* ((backend (alist-get 'openai-responses gptel-test-backends))
+         (info `(:backend ,backend
+                 :data (:input [])
+                 :callback ignore)))
+    (with-temp-buffer
+      (insert "event: response.output_item.done\n")
+      (insert "data: {\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"Edit\",\"arguments\":\"\\\"bad\\\"\"}}\n")
+      (insert "event: response.completed\n")
+      (insert "data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n")
+      (goto-char (point-min))
+      (should (string= (gptel-curl--parse-stream backend info) ""))
+      (let ((tool-call (car (plist-get info :tool-use))))
+        (should (equal (plist-get tool-call :name) "Edit"))
+        (should-not (plist-get tool-call :args))))))
 
